@@ -66,9 +66,62 @@ export async function resetTableStatus(tableId: number) {
 }
 
 // Set table status to Cleaning
-export async function setTableStatusToCleaning(tableId: number) {
-  return updateTableStatus(tableId, 'cleaning')
-}
+export async function setTableStatusToCleaning(tableId: number): Promise<{
+    success: boolean;
+    error?: string;
+  }> {
+    try {
+      // First update the status to cleaning
+      const { error } = await supabase
+        .from('table_status')
+        .update({ 
+          status: 'cleaning',
+          last_updated: new Date().toISOString() 
+        })
+        .eq('id', tableId);
+  
+      if (error) {
+        console.error('Error setting table to cleaning status:', error);
+        return {
+          success: false,
+          error: error.message || 'Database error occurred'
+        };
+      }
+  
+      // Now set up a client-side timeout to update to empty after 5 seconds
+      setTimeout(async () => {
+        try {
+          console.log(`Auto-resetting table ${tableId} from cleaning to empty...`);
+          
+          const { error: resetError } = await supabase
+            .from('table_status')
+            .update({ 
+              status: 'empty',
+              last_updated: new Date().toISOString(),
+              occupied_since: null,
+              estimated_free_time: null
+            })
+            .eq('id', tableId);
+            
+          if (resetError) {
+            console.error('Error auto-resetting table status:', resetError);
+          } else {
+            console.log(`Successfully reset table ${tableId} to empty status`);
+          }
+        } catch (resetErr) {
+          console.error('Exception during auto-reset:', resetErr);
+        }
+      }, 5000);
+      
+      return { success: true };
+    } catch (error) {
+      console.error('Error in setTableStatusToCleaning:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error)
+      };
+    }
+  }
 
 // Set table status to Calling Staff
 export async function setTableStatusToCallingStaff(tableId: number) {

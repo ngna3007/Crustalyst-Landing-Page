@@ -81,6 +81,8 @@ export default function TableTablet() {
   const [showExitDialog, setShowExitDialog] = useState(false)
   const [exitPassword, setExitPassword] = useState("")
   const [passwordError, setPasswordError] = useState("")
+  // Add new state for tracking total session orders
+  const [sessionOrdersTotal, setSessionOrdersTotal] = useState(0)
   
   // Menu items state
   const [menuItems, setMenuItems] = useState<MenuItem[]>([])
@@ -116,7 +118,7 @@ export default function TableTablet() {
         }
         
         setTableId(data.id)
-        setTableNumber(data.table_number)
+        setTableNumber(data.table_id)
       } catch (error) {
         console.error('Error fetching table details:', error)
         router.push('/table-selection')
@@ -154,28 +156,49 @@ export default function TableTablet() {
     fetchMenuItems()
   }, [])
   
-  // Get order history from database
+  // Get order history from database and calculate session total
   useEffect(() => {
     if (!tableId) return
     
     async function fetchOrderHistory() {
       try {
+        console.log("Fetching order history for table ID:", tableId);
+        
         // Get orders for this table
         const { data: ordersData, error: ordersError } = await supabase
           .from('orders')
-          .select('id, status, created_at')
+          .select('id, status, created_at, total_amount')
           .eq('table_id', tableId)
           .order('created_at', { ascending: false })
           .limit(50)
         
-        if (ordersError) throw ordersError
+        if (ordersError) {
+          console.error('Error fetching orders data:', ordersError);
+          throw ordersError;
+        }
+        
+        console.log("Orders data received:", ordersData);
         
         if (!ordersData || ordersData.length === 0) {
+          console.log("No orders found for this table");
+          setOrderHistory([]);
+          setSessionOrdersTotal(0);
           return // No orders to process
         }
         
+        // Calculate session total from all orders
+        const totalSessionAmount = ordersData.reduce((sum, order) => {
+          const amount = order.total_amount || 0;
+          return sum + amount;
+        }, 0);
+        
+        console.log("Calculated session total:", totalSessionAmount);
+        setSessionOrdersTotal(totalSessionAmount);
+        
         // Get order items for these orders
-        const orderIds = ordersData.map(order => order.id)
+        const orderIds = ordersData.map(order => order.id);
+        
+        console.log("Fetching order items for order IDs:", orderIds);
         
         const { data: itemsData, error: itemsError } = await supabase
           .from('order_items')
@@ -190,20 +213,30 @@ export default function TableTablet() {
           `)
           .in('order_id', orderIds)
         
-        if (itemsError) throw itemsError
+        if (itemsError) {
+          console.error('Error fetching order items:', itemsError);
+          throw itemsError;
+        }
+        
+        console.log("Order items received:", itemsData?.length || 0);
         
         // Get menu items to map names
         const { data: menuData, error: menuError } = await supabase
           .from('menu_items')
           .select('id, name')
         
-        if (menuError) throw menuError
+        if (menuError) {
+          console.error('Error fetching menu items for mapping:', menuError);
+          throw menuError;
+        }
         
-        const menuMap = new Map(menuData?.map(item => [item.id, item.name]) || [])
+        console.log("Menu items for mapping received:", menuData?.length || 0);
+        
+        const menuMap = new Map(menuData?.map(item => [item.id, item.name]) || []);
         
         // Map order items to history items
         const historyItems: OrderHistoryItem[] = (itemsData || []).map(item => {
-          const order = ordersData.find(o => o.id === item.order_id)
+          const order = ordersData.find(o => o.id === item.order_id);
           
           return {
             id: item.menu_item_id,
@@ -213,16 +246,25 @@ export default function TableTablet() {
             specialInstructions: item.special_instructions,
             status: item.status as OrderStatusType,
             timestamp: new Date(order?.created_at || new Date())
-          }
-        })
+          };
+        });
         
-        setOrderHistory(historyItems)
+        console.log("Mapped history items:", historyItems.length);
+        setOrderHistory(historyItems);
       } catch (error) {
-        console.error('Error fetching order history:', error)
+        // Enhanced error logging
+        if (error instanceof Error) {
+          console.error('Error fetching order history:', error.message, error.stack);
+        } else {
+          console.error('Unknown error fetching order history:', JSON.stringify(error));
+        }
+        
+        // Set empty arrays to prevent UI from breaking
+        setOrderHistory([]);
       }
     }
     
-    fetchOrderHistory()
+    fetchOrderHistory();
     
     // Set up real-time listener for order changes
     const ordersSubscription = supabase
@@ -234,11 +276,12 @@ export default function TableTablet() {
           table: 'orders' 
         }, 
         payload => {
+          console.log("Order change detected:", payload);
           if (payload.new && (payload.new as any).table_id === tableId) {
-            fetchOrderHistory()
+            fetchOrderHistory();
           }
       })
-      .subscribe()
+      .subscribe();
     
     const orderItemsSubscription = supabase
       .channel('order_item_changes')
@@ -249,15 +292,17 @@ export default function TableTablet() {
           table: 'order_items' 
         }, 
         payload => {
-          fetchOrderHistory()
+          console.log("Order item change detected:", payload);
+          fetchOrderHistory();
       })
-      .subscribe()
+      .subscribe();
     
     return () => {
-      supabase.removeChannel(ordersSubscription)
-      supabase.removeChannel(orderItemsSubscription)
+      console.log("Cleaning up subscriptions");
+      supabase.removeChannel(ordersSubscription);
+      supabase.removeChannel(orderItemsSubscription);
     }
-  }, [tableId])
+  }, [tableId]);
   
   // Calculate the categories from menu items
   const categories = useMemo(() => {
@@ -286,38 +331,104 @@ export default function TableTablet() {
     setShowExitDialog(true)
   }
   
-  // Handle password verification
+  // Handle password verification and delete data
   const handlePasswordSubmit = async () => {
     // This password would ideally be stored securely and validated properly
     if (exitPassword === "admin123") {
-      setPasswordError("")
-      setShowExitDialog(false)
+      setPasswordError("");
+      setShowExitDialog(false);
       
       try {
-        // Update table status in the database
+        // Delete all orders and related data for this table
         if (tableId) {
-          const result = await setTableStatusToCleaning(tableId)
+          // Show pending notification
+          showTemporaryNotification("Processing table cleanup...");
           
-          if (!result.success) {
-            throw new Error('Failed to update table status')
+          try {
+            // First get all order IDs for this table
+            const { data: orderData, error: orderError } = await supabase
+              .from('orders')
+              .select('id')
+              .eq('table_id', tableId);
+              
+            if (orderError) {
+              console.error('Error fetching order IDs:', orderError);
+              // Continue anyway - may not have orders
+            }
+            
+            if (orderData && orderData.length > 0) {
+              try {
+                const orderIds = orderData.map(order => order.id);
+                
+                // Delete order items for these orders
+                const { error: itemsError } = await supabase
+                  .from('order_items')
+                  .delete()
+                  .in('order_id', orderIds);
+                  
+                if (itemsError) {
+                  console.error('Error deleting order items:', itemsError);
+                  // Continue anyway - try to delete orders
+                }
+                
+                // Delete the orders themselves
+                const { error: ordersDeleteError } = await supabase
+                  .from('orders')
+                  .delete()
+                  .eq('table_id', tableId);
+                  
+                if (ordersDeleteError) {
+                  console.error('Error deleting orders:', ordersDeleteError);
+                  // Continue anyway - try to update table status
+                }
+              } catch (deleteError) {
+                console.error('Error during deletion process:', deleteError);
+                // Continue anyway - try to update table status
+              }
+            }
+            
+            // Update table status to cleaning - this is the critical step
+            console.log(`Setting table ${tableId} status to cleaning...`);
+            const result = await setTableStatusToCleaning(tableId);
+            
+            if (!result.success) {
+              console.error('Error updating table status:', result.error);
+              throw new Error(`Failed to update table status: ${result.error || 'Unknown error'}`);
+            }
+            
+            console.log('Table status successfully updated to cleaning');
+            
+          } catch (tableError) {
+            console.error('Table operation error:', tableError);
+            throw tableError;
           }
+          
+          // Show success notification
+          showTemporaryNotification("Table cleaned up successfully!");
+          
+          // Clear local storage
+          localStorage.removeItem('selectedTableId');
+          
+          // Redirect back to table selection after a short delay
+          setTimeout(() => {
+            router.push('/table-selection');
+          }, 1000);
         }
-        
-        // Clear local storage
-        localStorage.removeItem('selectedTableId')
-        
-        // Redirect back to table selection
-        router.push('/table-selection')
-        
       } catch (error) {
-        console.error('Error updating table status:', error)
-        showTemporaryNotification("Failed to update table status, but exiting anyway.")
-        router.push('/table-selection')
+        const errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
+        console.error('Error cleaning up table data:', errorMessage);
+        showTemporaryNotification(`Failed to clean up all data: ${errorMessage}`);
+        
+        // Still exit anyway after showing the error
+        setTimeout(() => {
+          localStorage.removeItem('selectedTableId');
+          router.push('/table-selection');
+        }, 2000);
       }
     } else {
-      setPasswordError("Incorrect password")
+      setPasswordError("Incorrect password");
     }
-  }
+  };
   
   // Calculate cart total
   const cartTotal = cart.reduce((total, item) => total + (item.price * item.quantity), 0)
@@ -371,7 +482,7 @@ export default function TableTablet() {
     )
   }
   
-  // Updated send order function with database integration
+  // Updated send order function with database integration and session total update
   const sendOrder = async () => {
     if (cart.length === 0 || !tableId) return;
     
@@ -382,7 +493,7 @@ export default function TableTablet() {
       const { data: orderData, error: orderError } = await supabase
         .from('orders')
         .insert({
-          table_number: tableId,
+          table_id: tableId,
           total_amount: cartTotal,
           status: 'Ordered',
           notes: '' // Add notes functionality if needed
@@ -418,6 +529,9 @@ export default function TableTablet() {
         console.error('Order items creation error:', itemsError);
         throw new Error(`Failed to create order items: ${itemsError.message}`);
       }
+      
+      // After successful order, update session total
+      setSessionOrdersTotal(prev => prev + cartTotal);
       
       // Add current cart items to order history (local state)
       const newHistoryItems = cart.map(item => ({
@@ -566,7 +680,6 @@ export default function TableTablet() {
 
   return (
     <div className="flex flex-col h-screen bg-zinc-900 text-white">
-      {/* Header */}
       <header className="bg-black/90 backdrop-blur-sm border-b border-zinc-800 p-4 flex items-center justify-between">
         <div className="flex items-center gap-4">
           <div className="flex items-center">
@@ -584,6 +697,24 @@ export default function TableTablet() {
               </h1>
               <p className="text-xs text-gray-400">Gourmet Pizzeria</p>
             </div>
+          </div>
+          
+          <div className="flex gap-2">
+            {/* Show Table ID badge */}
+            {tableNumber && (
+              <div className="px-3 py-1 bg-zinc-800 rounded-md border border-zinc-700">
+                <span className="text-sm text-zinc-400">Table:</span>
+                <span className="ml-2 font-bold text-orange-400">#{tableNumber}</span>
+              </div>
+            )}
+            
+            {/* Show Session Total badge */}
+            {sessionOrdersTotal > 0 && (
+              <div className="px-3 py-1 bg-zinc-800 rounded-md border border-zinc-700">
+                <span className="text-sm text-zinc-400">Session Total:</span>
+                <span className="ml-2 font-bold text-orange-400">${sessionOrdersTotal.toFixed(2)}</span>
+              </div>
+            )}
           </div>
         </div>
         
@@ -700,7 +831,7 @@ export default function TableTablet() {
         </div>
       </div>
       
-      {/* Exit Table Password Dialog */}
+      {/* Exit Table Password Dialog with Warning */}
       <Dialog open={showExitDialog} onOpenChange={setShowExitDialog}>
         <DialogContent className="bg-zinc-900 border border-zinc-700 text-white sm:max-w-[425px]">
           <DialogHeader>
@@ -713,6 +844,16 @@ export default function TableTablet() {
           </DialogHeader>
           
           <div className="py-4">
+            <div className="flex items-start gap-3 p-3 bg-orange-900/20 border border-orange-800/50 rounded-md mb-4">
+              <AlertCircle className="h-5 w-5 text-orange-400 mt-0.5 flex-shrink-0" />
+              <div>
+                <p className="text-orange-300 font-medium mb-1">Warning</p>
+                <p className="text-orange-200 text-sm">
+                  Exiting will delete all order data for this table. Session total: ${sessionOrdersTotal.toFixed(2)}
+                </p>
+              </div>
+            </div>
+            
             <p className="text-gray-300 mb-4">
               Please enter the staff password to exit table mode:
             </p>
@@ -743,7 +884,7 @@ export default function TableTablet() {
               onClick={handlePasswordSubmit}
               className="bg-gradient-to-r from-orange-400 to-orange-700 text-white hover:from-orange-500 hover:to-orange-800"
             >
-              Confirm
+              Confirm & Exit
             </Button>
           </DialogFooter>
         </DialogContent>

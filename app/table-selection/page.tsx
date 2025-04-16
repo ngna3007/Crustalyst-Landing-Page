@@ -13,7 +13,7 @@ type DisplayTableStatus = "Empty" | "Reserved" | "Occupied" | "Cleaning"
 
 interface Table {
   id: number
-  table_number: number
+  table_id: number
   status: DBTableStatus
   displayStatus: DisplayTableStatus // For display purposes
   capacity: number
@@ -35,25 +35,68 @@ export default function TableSelection() {
     // Initial fetch of tables
     fetchTables()
     
-    // Set up real-time listener for table changes
-    const subscription = supabase
-      .channel('table_changes')
-      .on('postgres_changes', 
-        { 
-          event: '*', 
-          schema: 'public', 
-          table: 'table_status' 
-        }, 
-        payload => {
-          console.log('Table change detected:', payload)
-          // When a table is updated, fetch all tables again to keep UI in sync
-          fetchTables()
-      })
-      .subscribe()
+    let pollingInterval: NodeJS.Timeout | null = null;
     
-    // Cleanup on unmount
-    return () => {
-      supabase.removeChannel(subscription)
+    // Set up real-time listener for table changes with better error handling
+    try {
+      console.log('Setting up table_changes subscription')
+      const subscription = supabase
+        .channel('table_changes')
+        .on('postgres_changes', 
+          { 
+            event: '*', 
+            schema: 'public', 
+            table: 'table_status' 
+          }, 
+          payload => {
+            console.log('Table change detected:', payload)
+            // When a table is updated, fetch all tables again to keep UI in sync
+            fetchTables()
+        })
+        .subscribe((status) => {
+          console.log('Subscription status:', status)
+          if (status === 'SUBSCRIBED') {
+            console.log('Successfully subscribed to table changes')
+            // Clear polling if real-time works
+            if (pollingInterval) {
+              clearInterval(pollingInterval)
+              pollingInterval = null
+            }
+          } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+            console.warn(`Subscription issue: ${status}. Falling back to polling.`)
+            // Start polling as fallback if not already polling
+            if (!pollingInterval) {
+              console.log('Starting fallback polling mechanism')
+              pollingInterval = setInterval(fetchTables, 5000) // Poll every 5 seconds
+            }
+          }
+        })
+      
+      // Always set up polling as a backup
+      pollingInterval = setInterval(fetchTables, 10000)
+      
+      // Cleanup on unmount
+      return () => {
+        console.log('Cleaning up subscriptions and intervals')
+        if (pollingInterval) {
+          clearInterval(pollingInterval)
+        }
+        
+        try {
+          // Wrap in a try-catch to prevent unmount errors
+          supabase.removeChannel(subscription)
+        } catch (err) {
+          console.error('Error during subscription cleanup:', err)
+          // Non-blocking - we're unmounting anyway
+        }
+      }
+    } catch (err) {
+      console.error('Error setting up subscription:', err)
+      // Always fall back to polling on error
+      pollingInterval = setInterval(fetchTables, 5000)
+      return () => {
+        if (pollingInterval) clearInterval(pollingInterval)
+      }
     }
   }, [])
   
@@ -61,26 +104,107 @@ export default function TableSelection() {
   async function fetchTables() {
     try {
       setIsLoading(true)
+      console.log('Fetching tables...')
+      
+      // Check Supabase connection first
+      try {
+        // Simple health check query
+        const { error: healthCheckError } = await supabase.from('_health_check').select('status').maybeSingle()
+        if (healthCheckError) {
+          console.error('Supabase health check failed:', healthCheckError)
+        } else {
+          console.log('Supabase connection seems healthy')
+        }
+      } catch (healthErr) {
+        console.warn('Health check not available:', healthErr)
+        // Continue with the main query anyway
+      }
+      
+      // Log Supabase auth state
+      const session = await supabase.auth.getSession()
+      console.log('Current auth session exists:', !!session?.data?.session)
+      
+      // Add more detailed error handling for the Supabase query
+      console.log('Executing table_status query...')
       const { data, error } = await supabase
         .from('table_status')
         .select('*')
-        .order('table_number', { ascending: true })
+        .order('table_id', { ascending: true })
+      
+      // Log the raw response for debugging
+      console.log('Query response received:', { data: !!data, error: error || 'No error' })
       
       if (error) {
-        throw error
+        console.error('Supabase error details:', {
+          message: error.message,
+          code: error.code,
+          hint: error.hint,
+          details: error.details
+        })
+        throw new Error(`Database error: ${error.message || 'Unknown error'}`)
       }
       
-      // Map DB status to display status
-      const processedData = data?.map(table => ({
-        ...table,
-        // Convert DB status to display-friendly status
-        displayStatus: getDisplayStatus(table.status as DBTableStatus)
-      })) || []
+      if (!data) {
+        console.warn('No data returned from tables query')
+        setTables([])
+        return
+      }
       
+      console.log('Tables data received:', data.length)
+      
+      // Map DB status to display status
+      const processedData = data.map(table => {
+        // Ensure all required fields exist
+        if (table === null || typeof table !== 'object') {
+          console.warn('Invalid table data:', table)
+          return null
+        }
+        
+        // Check for missing fields
+        if (table.id === undefined || table.table_id === undefined || table.status === undefined) {
+          console.warn('Table record is missing required fields:', table)
+          return null
+        }
+        
+        const dbStatus = table.status as DBTableStatus || 'empty'
+        
+        return {
+          ...table,
+          // Convert DB status to display-friendly status
+          displayStatus: getDisplayStatus(dbStatus)
+        }
+      }).filter(Boolean) as Table[] // Remove any null entries
+      
+      console.log('Processed tables data:', processedData.length)
       setTables(processedData)
     } catch (error) {
-      console.error('Error fetching tables:', error)
-      setError('Failed to load tables. Please try again.')
+      // Enhanced error logging
+      console.error('Error in fetchTables function:')
+      if (error instanceof Error) {
+        console.error(`- Name: ${error.name}`)
+        console.error(`- Message: ${error.message}`)
+        console.error(`- Stack: ${error.stack}`)
+      } else if (error === null) {
+        console.error('- Error is null')
+      } else if (error === undefined) {
+        console.error('- Error is undefined')
+      } else if (typeof error === 'object') {
+        console.error('- Error is an object:', JSON.stringify(error, null, 2))
+      } else {
+        console.error(`- Error is a ${typeof error}:`, String(error))
+      }
+      
+      // Try to use the Supabase client without the API
+      try {
+        console.log('Testing supabase client initialization...')
+        console.log('- Client exists:', !!supabase)
+        console.log('- Auth module exists:', !!supabase.auth)
+        console.log('- From method exists:', !!supabase.from)
+      } catch (clientErr) {
+        console.error('Error accessing supabase client:', clientErr)
+      }
+      
+      setError('Failed to load tables. Please check your connection and try again.')
     } finally {
       setIsLoading(false)
     }
@@ -93,7 +217,8 @@ export default function TableSelection() {
       case 'reserved': return 'Reserved'
       case 'occupied': return 'Occupied'
       case 'cleaning': return 'Cleaning'
-      default: return 'Empty' // Fallback
+      case 'calling_staff': return 'Occupied'
+      default: return 'Empty'
     }
   }
   
@@ -273,7 +398,7 @@ export default function TableSelection() {
                   >
                     <div className="flex justify-between items-start mb-2">
                       <h4 className={`text-xl font-semibold ${style.text}`}>
-                        Table {table.table_number}
+                        Table {table.table_id}
                       </h4>
                       <span className={`inline-flex items-center justify-center px-2 py-1 text-xs font-medium rounded-full ${style.badge} text-white`}>
                         {table.displayStatus}
@@ -303,20 +428,28 @@ export default function TableSelection() {
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
             {otherTables.map(table => {
               const style = getStatusStyle(table.displayStatus);
+              const isCallingStaff = table.status === 'calling_staff';
+              
               return (
                 <div 
                   key={table.id}
                   className={`
-                    rounded-lg p-3 cursor-not-allowed opacity-80
+                    rounded-lg p-3 cursor-not-allowed 
                     ${style.bg} ${style.border} border
+                    ${isCallingStaff ? 'opacity-95 animate-pulse' : 'opacity-80'}
                   `}
                 >
                   <div className="flex justify-between items-start mb-2">
                     <h4 className={`text-xl font-semibold ${style.text}`}>
-                      Table {table.table_number}
+                      Table {table.table_id}
                     </h4>
                     <span className={`inline-flex items-center justify-center px-2 py-1 text-xs font-medium rounded-full ${style.badge} text-white`}>
                       {table.displayStatus}
+                      {isCallingStaff && (
+                        <span className="ml-1 flex items-center">
+                          <span className="inline-block h-1.5 w-1.5 rounded-full bg-white animate-ping ml-1"></span>
+                        </span>
+                      )}
                     </span>
                   </div>
                   
@@ -324,6 +457,12 @@ export default function TableSelection() {
                     <span className={`text-sm ${style.text}`}>
                       {table.capacity} {table.capacity === 1 ? 'person' : 'people'}
                     </span>
+                    {isCallingStaff && (
+                      <div className="mt-1 text-xs text-rose-600 font-medium flex items-center gap-1">
+                        <span className="inline-block h-2 w-2 bg-rose-500 rounded-full"></span>
+                        Needs Assistance
+                      </div>
+                    )}
                   </div>
                 </div>
               );
@@ -336,7 +475,7 @@ export default function TableSelection() {
           {selectedTable ? (
             <p className="text-xl sm:text-2xl font-medium text-white">
               Table <span className="text-orange-400 font-bold">
-                {tables.find(t => t.id === selectedTable)?.table_number}
+                {tables.find(t => t.id === selectedTable)?.table_id}
               </span> selected
             </p>
           ) : (
