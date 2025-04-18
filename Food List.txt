@@ -1,0 +1,101 @@
+export const menuItems: MenuItem[] = [
+  {
+    id: 1,
+    name: "Assorted House-made Cheese (S)",
+    description: "Fresh mozzarella, burrata, ricotta, aged provolone, house-made focaccia",
+    price: 14.95,
+    image: "https://pizza4ps.com/wp-content/uploads/2023/07/BYO_Assorted-Cheese_S-2-scaled.jpg",
+    category: "Appetizers & Salads",
+    popular: true
+  },
+  {
+    id: 2,
+    name: "Assorted House-made Cheese (L)",
+    description: "Fresh mozzarella, burrata, ricotta, aged provolone, house-made focaccia",
+    price: 18.95,
+    image: "https://pizza4ps.com/wp-content/uploads/2023/07/BYO_Assorted-Cheese_L-2-scaled.jpg",
+    category: "Appetizers & Salads"
+  },
+  {
+    id: 3,
+    name: "Mozzarella Salmon Sushi",
+    description: "Fresh mozzarella, smoked salmon, avocado, wasabi mayo",
+    price: 16.95,
+    image: "https://pizza4ps.com/wp-content/uploads/2023/07/4PS_NOV_SOCIAL-6322.jpg",
+    category: "Appetizers & Salads",
+    popular: true
+  },
+  {
+    id: 4,
+    name: "Clam Chowder",
+    description: "warm clam chowder, house-made focaccia",
+    price: 17.95,
+    image: "https://pizza4ps.com/wp-content/uploads/2023/07/20000043_2.jpg",
+    category: "Appetizers & Salads"
+  },
+  {
+    id: 5,
+    name: "Oven Baked German Potato with Raclette",
+    description: "Oven-baked potato, melted raclette cheese and herbs",
+    price: 18.95,
+    image: "https://pizza4ps.com/wp-content/uploads/2023/08/4Ps_KAIZENDISHES-SOCIAL-5608.jpg",
+    category: "Appetizers & Salads"
+  },
+  {
+    id: 6,
+    name: "Spicy Garlic Shrimp Pizza",
+    description: "Spicy garlic shrimp, mozzarella, arugula, chili flakes",
+    price: 22.95,
+    image: "https://pizza4ps.com/wp-content/uploads/2024/04/BYO_Garlic-Shrimp-Pizza-1.jpg",
+    category: "Pizza",
+    popular: true
+  },
+  {
+    id: 7,
+    name: "Burrata Parma ham",
+    description: "Fresh burrata, parma ham, arugula, cherry tomatoes",
+    price: 22.95,
+    image: "https://pizza4ps.com/wp-content/uploads/2023/07/PizzaBYO-1.png",
+    category: "Pizza",
+    popular: true
+  },
+  {
+    id: 8,
+    name: "Extra Parma Ham Margherita",
+    description: "Fresh mozzarella, parma ham, basil, tomato sauce",
+    price: 22.95,
+    image: "https://pizza4ps.com/wp-content/uploads/2023/07/Extra-Parma-Ham-Margherita-4.jpg",
+    category: "Pizza",
+    popular: true
+  },
+  {
+    id: 9,
+    name: "House-made 3 Cheese Pizza",
+    description: "Fresh mozzarella, burrata, ricotta, aged provolone",
+    price: 22.95,
+    image: "https://pizza4ps.com/wp-content/uploads/2023/07/10000005_2.jpg",
+    category: "Pizza",
+    popular: true
+  },
+  {
+    id: 10,
+    name: "Hokkaido Scallops Sweet Miso Gratin Pizza",
+    description: "Hokkaido scallops, sweet miso, mozzarella, herbs",
+    price: 22.95,
+    image: "https://pizza4ps.com/wp-content/uploads/2023/07/10010008_2.jpg",
+    category: "Pizza",
+    popular: true
+  },
+  // Add more menu items as needed
+]
+
+
+
+
+
+INSERT INTO menu_items (name, description, price, image_url, category, is_popular)
+VALUES
+  ('Assorted House-made Cheese (S)', 'Fresh mozzarella, burrata, ricotta, aged provolone, house-made focaccia', 14.95, 'https://pizza4ps.com/wp-content/uploads/2023/07/BYO_Assorted-Cheese_S-2-scaled.jpg', 'Appetizers & Salads', TRUE),
+  ('Assorted House-made Cheese (L)', 'Fresh mozzarella, burrata, ricotta, aged provolone, house-made focaccia', 18.95, 'https://pizza4ps.com/wp-content/uploads/2023/07/BYO_Assorted-Cheese_L-2-scaled.jpg', 'Appetizers & Salads', FALSE),
+  ('Mozzarella Salmon Sushi', 'Fresh mozzarella, smoked salmon, avocado, wasabi mayo', 16.95, 'https://pizza4ps.com/wp-content/uploads/2023/07/4PS_NOV_SOCIAL-6322.jpg', 'Appetizers & Salads', TRUE),
+  ('Spicy Garlic Shrimp Pizza', 'Spicy garlic shrimp, mozzarella, arugula, chili flakes', 22.95, 'https://pizza4ps.com/wp-content/uploads/2024/04/BYO_Garlic-Shrimp-Pizza-1.jpg', 'Pizza', TRUE);
